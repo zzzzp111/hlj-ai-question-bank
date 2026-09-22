@@ -146,11 +146,14 @@ cd web && npm run build        # 零错误
 2. **填三个变量**（OpenAI 兼容协议，格式见模板注释）：
    - `LLM_API_KEY=你的密钥`
    - `LLM_BASE_URL=兼容端点`（示例 `https://api.deepseek.com/v1` 或 `https://api.openai.com/v1`）
-   - `LLM_MODEL=模型名`（示例 `deepseek-chat` / `gpt-4o-mini`）
+   - `LLM_MODEL=模型名`（**必须先查账号实际可用 ID**：`curl {LLM_BASE_URL}/models -H "Authorization: Bearer $KEY"`。不同账号/套餐返回的 ID 不同，切勿照抄示例——例如某 DeepSeek 账号只返回 `deepseek-flash` / `deepseek-v4-pro`，填 `deepseek-chat` 会直接报错）
    - 可选 `PORT=3001`
 3. **重启 server**：`cd server && npm run dev`（`config/env.js` 在启动时读取，改 `.env` 必须重启才生效）。
 4. **验证**：`curl -X POST localhost:3001/api/generate -H 'content-type: application/json' -d '{"module":"数量关系","count":2}'` → 响应 `mock:false` 即真实模型生效。
-5. **兜底行为（不配置则自动 Mock）**：未配 `LLM_API_KEY` 或超时/调用异常 → `callLLM` 抛"未配置/超时"类错误 → route 捕获后用 `mockData` 兜底，响应 `mock:true`，前端显示"Mock 模式"徽标。**密钥只允许存在于 `server/.env`（C1）**。
+5. **耗时限值（2026-09-22 实测）**：`callLLM` 超时硬编码 30s 且 `generate.js` 未覆盖，**推理型模型出题耗时随题量近线性增长**——实测 `deepseek-flash`：count=3 约 17.7s、count=5 约 19.4s、count=10 约 24.2s。**count=10 仅余约 6s 余量**；超时会自动回退 Mock 而**不抛错**，现象是响应突然变 `mock:true`（极易被误判为"配置没生效"），排查先看后端 stderr 的 `err.kind=TIMEOUT`。
+6. **兜底行为（不配置则自动 Mock）**：未配 `LLM_API_KEY` 或超时/调用异常 → `callLLM` 抛"未配置/超时"类错误 → route 捕获后用 `mockData` 兜底，响应 `mock:true`，前端显示"Mock 模式"徽标。**密钥只允许存在于 `server/.env`（C1）**。
+7. **Windows 环境坑（跨平台搬运后必查）**：若 `web/node_modules` 是从 macOS 带过来的（特征：含 `*-darwin-*` 原生包如 `lightningcss-darwin-arm64`、`fsevents`，且**没有 `node_modules/.bin`**），Windows 上 `npm run dev` 会报 `'vite' 不是内部或外部命令`，须在本机重新 `npm install`；不想动 `node_modules` 时可用 `web/dist` 产物 + 一个把 `/api` 代理到 3001 的静态服务器顶替（`dist` 跨平台通用）。`server/` 无原生依赖，不受影响。
+8. **推理型模型的 `content` 可能为空**：部分推理模型（如 `deepseek-flash`）先输出 `reasoning_content`，若 `max_tokens` 被推理过程吃满，`content` 会是空串，`_fetchOnce` 随即判为异常并回退 Mock。`callLLM` 未设 `max_tokens`，正常出题不受影响；但自写探测请求验证连通性时务必给足 `max_tokens`（建议 ≥200），否则会误判为"模型不可用"。
 
 ## 6. 错误自查速查表
 

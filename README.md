@@ -188,11 +188,11 @@ server/src/services/callLLM.js
 
 1. 复制 `server/.env.example` 为 `server/.env`（见 §5）。
 2. 填写三个变量：`LLM_API_KEY`、`LLM_BASE_URL`（**必须是 OpenAI 兼容端点**，`/chat/completions`）、`LLM_MODEL`。
-   2a. （可选，Wave 11）如需推理模型：`LLM_MODEL=deepseek-reasoner`（或 o 系模型），并设置 `LLM_REASONING_EFFORT=medium` 等强度；思考引导已内置于系统提示词（内部推演、入答案排除）。
+   2a. （可选，Wave 11）如需推理模型：先 `curl {LLM_BASE_URL}/models -H "Authorization: Bearer $KEY"` 查询**账号实际可用**的模型 ID（不同账号/套餐返回的 ID 不同，不可照抄示例），再据此设置 `LLM_MODEL`；需要控制推理强度时可设 `LLM_REASONING_EFFORT=medium` 等强度；思考引导已内置于系统提示词（内部推演、入答案排除）。
 3. 重启后端：`npm run dev`。
 4. 验证：调用生成接口后响应中 `mock` 字段应为 `false`。
 
-> ⚠️ **模型状态如实声明**：真实链路（`callLLM` → OpenAI 兼容服务 → `mock:false`）已按协议完整实现并覆盖四层校验与重试逻辑，但**当前开发环境未配置任何 LLM Key，真实链路未做过实测**。演示与提交均以 Mock 模式（`mock:true`）保闭环；配置 Key 后即可切换，代码无需改动（双轨切换完全由服务端封装完成，C4）。
+> ⚠️ **模型状态如实声明（2026-09-22 更新）**：真实链路（`callLLM` → OpenAI 兼容服务 → `mock:false`）已按协议完整实现并覆盖四层校验与重试逻辑，**已于 2026-09-22 用 DeepSeek 实测通过**（`LLM_MODEL=deepseek-flash`）：`count=3/5/10` 均返回 `mock:false`，`npm run verify` 47 项断言全绿，`npm run test:e2e` 9/9 PASS 且全程真实链路；function calling 往返实测可自主调用 `search_question_bank`。**实测耗时与 30s 超时红线的余量**：count=3 约 17.7s、count=5 约 19.4s、count=10 约 24.2s（推理型模型出题耗时随题量增长，count=10 仅余约 6s 余量；若线上超时仍会自动回退 Mock，观感为 `mock:true`）。未配置 `LLM_API_KEY` 时仍以 Mock 模式（`mock:true`）保闭环；切换真实模型代码无需改动（双轨切换完全由服务端封装完成，C4）。
 
 ### 6.3 Mock 模式与替换机制
 
@@ -247,7 +247,7 @@ server/src/services/callLLM.js
 |------|------|------|
 | 服务层-需求解析 | `server/src/services/parseRequirement.js` | ✅ 已实现（别名归一 / 显式字段优先） |
 | 服务层-Prompt 组装 | `server/src/services/buildPrompt.js` | ✅ 已实现（含 context 续出提示） |
-| 服务层-模型调用 | `server/src/services/callLLM.js` | ✅ 已实现（超时 / 重试 / 无 Key 判定；真实端未实测） |
+| 服务层-模型调用 | `server/src/services/callLLM.js` | ✅ 已实现且**真实端已实测**（2026-09-22 DeepSeek `deepseek-flash`；超时 / 重试 / 无 Key 判定 / function calling 往返） |
 | 服务层-校验修复 | `server/src/services/validateQuestions.js` | ✅ 已实现（四层校验 + B1 一致性强化） |
 | 服务层-Mock 题库 | `server/src/services/mockData.js` | ✅ 已实现（29 题 / 5 模块 / 难度混合） |
 | 路由-出题 / 健康 | `server/src/routes/generate.js`、`server/src/index.js` | ✅ 已实现（七步流程 + B2 硬去重 + 400 错误归一） |
@@ -271,13 +271,14 @@ server/src/services/callLLM.js
 
 ## 9. 已知问题与限制（实测清单，如实声明）
 
-1. **真实 LLM 链路未实测**：环境无 Key，`mock:false` 分支未做端到端实测（代码路径已实现，见 §6.2 声明）；含 Wave 9 function calling 真实往返（模型发 tool_calls → 检索题库素材 → 回填出题）同样依赖 Key，未实测。`QUESTION_BANK_API_URL` 配置后的远程题库检索亦未实测（本地种子兜底已由 verify 40 项全自动验证）。
+1. **~~真实 LLM 链路未实测~~ → 已于 2026-09-22 实测通过**（DeepSeek `deepseek-flash`，`count=3/5/10` 均 `mock:false`；含 Wave 9 function calling 真实往返：模型发 `tool_calls` → 检索题库素材 → 回填 → 出题，已实测自主调用 `search_question_bank` 成功）。**仍未实测项**：`QUESTION_BANK_API_URL` 配置后的**远程**题库检索（本地种子兜底已由 verify 全自动验证；远程端点无可用服务，未验证）。
 2. **Mock 题库容量充足并随机化（Wave 13）**：内置 150 题（五大模块各 30，难度三档混合）。Mock 每次随机抽样 + 选项乱序（answer/解析同步），同一参数重复请求返回不同题目与选项排列；`count=10` 可出满且两次请求实测题目不同；「再来一道类似」仍靠"排除集过滤 → 空回退保留原列表"保底与区分。真实 LLM 链路不受题库规模限制。
 3. **Mock 难度不足时回退模块池**：某模块指定难度下题目不足时，`_mockQuestions` 回退模块内全部题，可能造成知识点与难度设定不完全一致（属 Mock 设计取舍，真实链路不受影响）。
 4. **R3 防连点未做浏览器端自动化**：`generating` 守卫为代码级实现（逻辑简单可靠），未配 Playwright 等浏览器自动化测试。
 5. **自然语言中文字符数量词不识别**：`parseRequirement.js` 仅识别阿拉伯数字（中文「一道/两题」回落默认 3 题），属已知非阻塞缺陷（已记录于 AI-CODING.md）。
 6. **Demo 范围界定**（任务书明确排除项）：无登录注册、无付费、无完整题库、无商业级 UI、无复杂部署——"宁可只做好一个模块也不做多个不可用的页面"。
 7. **不编造政策**（约束 C5）：Mock 题库与 prompt 均使用中性示例数据，未引用特定省份真实政策条文。
+8. **本机 `web/node_modules` 为 macOS 版依赖（Windows 上需重装）**：该目录由 macOS 环境带过来，内含 `lightningcss-darwin-arm64`、`fsevents` 等 `*-darwin-*` 原生包，且**缺失 `node_modules/.bin`**，在 Windows 上执行 `cd web && npm run dev` 会报 `'vite' 不是内部或外部命令`。**处置**：在本机 `cd web && npm install` 重新安装后再启动（`server/` 无原生依赖，未受影响）。
 
 ---
 
@@ -285,10 +286,10 @@ server/src/services/callLLM.js
 
 ### 10.1 模型状态（提交 / 演示时明确）
 
-- [ ] **真实 API**：已配置 `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL`，出题响应 `mock: false` —— **本次未提供 Key，未实测**
+- [x] **真实 API**：已配置 `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL`，出题响应 `mock: false` —— **2026-09-22 已实测**（DeepSeek `deepseek-flash`；`count=3/5/10` 均 `mock:false`）
 - [x] **Mock 模式**：未配置 Key 或回退兜底，响应 `mock: true`，界面显示 Mock 标识
 
-> 演示现场无 Key 即以 Mock 模式保闭环（AGENTS.md C4），README §6.3 说明替换方式；若演示方提供 Key，重启后端即切换真实链路。
+> 演示现场无 Key 即以 Mock 模式保闭环（AGENTS.md C4），README §6.3 说明替换方式；配好 Key 重启后端即切真实链路（已实测）。注意：本机 `web/node_modules` 为 macOS 版依赖（含 `*-darwin-*` 原生包且缺 `.bin`），在 Windows 上跑 `npm run dev` 前需在本机重新 `npm install`（见 §9 新增条目）。
 
 ### 10.2 提交信息模板
 
@@ -297,7 +298,7 @@ server/src/services/callLLM.js
 | 项目名 | 黑龙江省考 AI 出题 Agent（全栈 Demo） |
 | 代码地址 | 本地目录 `/Users/zhuyao/Desktop/demo_01` |
 | 启动方式 | 见 §4 安装与启动（后端 3001 / 前端 5173） |
-| 模型状态 | Mock 模式（真实链路已实现未实测，见 §6.2 / §10.1） |
+| 模型状态 | 真实链路已实测：DeepSeek `deepseek-flash`，`mock:false`（见 §6.2 / §10.1） |
 | 本次已完成 | Wave 0~13 全波次：双端闭环、五模块 Mock（团队扩容至 150 题，各 30 题）、四层校验、判题解析、学习统计、加分项 B1/B2、R1~R4 修复、Apple 风格 UI、A 级文档族 24 份、最终验证 + BUG-009 修复、function calling 去硬编码（questionBank）、Mock 随机化、LLM 思考增强（内部推演引导 + reasoning_effort） |
 | 本次未完成 | 真实 LLM 链路实测（无 Key）；浏览器自动化测试；部署上线（任务书未要求） |
 
