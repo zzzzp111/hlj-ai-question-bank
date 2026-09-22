@@ -136,13 +136,16 @@ router.post('/', async (req, res) => {
 
   let mock = true; // 默认 Mock 兜底；真实链路全部通过后才改为 false
   let questions = [];
+  let mockReason = ''; // P1-1：Mock 兜底原因（可选诊断字段，仅 mock:true 时附带；如 TIMEOUT / NO_KEY / VALIDATION_FAILED / EMPTY_CONTENT / HTTP）
 
   try {
     // ③ 首次调用模型（Wave 9：携带 function calling 工具；Wave 11：透传推理强度）
+    //    P1-1：显式传入可配置超时（LLM_TIMEOUT_MS），避免 30s 硬编码与推理模型耗时撞线静默降级
     let raw = await callLLM(_messages(prompt), {
       tools: QUESTION_BANK_TOOLS,
       toolExecutor: _toolExecutor,
       reasoningEffort: env.llmReasoningEffort || undefined,
+      timeoutMs: env.llmTimeoutMs,
     });
     // ④ 四层校验；失败反馈重新生成 ≤2 次（把上次错误信息追加进提示词）
     let validated = validateRaw(raw);
@@ -151,6 +154,7 @@ router.post('/', async (req, res) => {
         tools: QUESTION_BANK_TOOLS,
         toolExecutor: _toolExecutor,
         reasoningEffort: env.llmReasoningEffort || undefined,
+        timeoutMs: env.llmTimeoutMs,
       });
       validated = validateRaw(raw);
     }
@@ -162,11 +166,14 @@ router.post('/', async (req, res) => {
     } else {
       // ⑤ 校验最终失败 → Mock 兜底（mock:true）
       console.error(`[generate] 模型输出校验失败（${validated.errors.length} 处），回退 Mock：${validated.errors.join('；')}`);
+      mockReason = 'VALIDATION_FAILED';
       questions = _mockQuestions(params);
     }
   } catch (err) {
-    // 任何异常（callLLM 抛错：无 Key/超时/HTTP/网络，或未知异常）→ Mock 兜底 mock:true（C4）
+    // 任何异常（callLLM 抛错：无 Key/超时/HTTP/网络/EMPTY_CONTENT，或未知异常）→ Mock 兜底 mock:true（C4）
     // 仅记录错误 message，不含 Key（callLLM 的 message 从不携带 Key 内容）
+    // P1-1：把错误分类同步到 mockReason，使"静默降级"对调用方可见
+    mockReason = ['NO_KEY', 'TIMEOUT', 'HTTP', 'NETWORK', 'EMPTY_CONTENT'].includes(err?.kind) ? err.kind : 'CALL_FAILED';
     console.error(`[generate] 模型链路异常（${err?.kind ?? 'UNKNOWN'}），回退 Mock：${err?.message ?? err}`);
     questions = _mockQuestions(params);
   }
@@ -192,6 +199,8 @@ router.post('/', async (req, res) => {
 
   res.json({
     mock,
+    // mockReason 为可选诊断字段（P1-1）：仅 mock:true 且存在明确原因时附带，便于前端提示与排查降级原因
+    ...(mock && mockReason ? { mockReason } : {}),
     exam: params.exam,
     subject: params.subject,
     module: params.module,

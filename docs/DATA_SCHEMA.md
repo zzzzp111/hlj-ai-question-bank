@@ -116,6 +116,7 @@
 | `module` | string | 是 | 白名单内模块，如 `资料分析` |
 | `difficulty` | string | 是 | 枚举同请求，如 `中等` |
 | `questions` | array\<Question\> | 是 | 题目数组，**非空**（长度 = 请求 `count`），元素见 §4 |
+| `mockReason` | string | 否 | **仅当 `mock: true` 时可选附带**：Mock 兜底原因（`NO_KEY`/`TIMEOUT`/`VALIDATION_FAILED`/`EMPTY_CONTENT`/`HTTP`），供前端徽标提示与排查降级原因；`mock:false` 时不存在（可选诊断字段，不破坏既有契约，向前兼容） |
 
 > `mock` 双轨语义（对应 **C4 Mock 双轨**）：真实链路为 `callLLM → validateQuestions（失败重试 ≤2 次）`，任一环节异常或校验最终失败，统一回退 `mockData` 并置 `mock: true`；响应**永远**是合法 GenerateResponse，前端不得因字段缺失白屏。
 
@@ -207,9 +208,41 @@
 
 ---
 
-## 5. 统一错误响应
+## 5. ExplainRequest / ExplainResponse（`POST /api/explain` 追问讲解）
 
-### 5.1 结构
+> 加分项 B3。已提交判题后，用户可就单题请求"通俗讲解"（`web/src/components/ResultPanel.vue` 追问讲解按钮）。辅助能力，**不做 Mock 兜底**：有 Key 走 `callLLM` 生成大白话讲解；无 Key 走本地模板把解析重述为口语化讲解；异常统一 503。
+
+### 5.1 ExplainRequest（请求体）
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `question` | string | 否 | 该题完整题干（空串也可，模板会兜底） |
+| `analysis` | string | 否 | 该题官方解析文本 |
+| `userAsk` | string | 否 | 用户的针对性疑问（如"为什么不能用基期公式"）；可缺省 |
+
+### 5.2 ExplainResponse（响应体）
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `explanation` | string | 是 | 通俗讲解文本（UTF-8，可含换行） |
+
+成功示例：
+
+```json
+{ "explanation": "先回答你的疑问：「为什么不能用基期公式」。\n用大白话一步一步来看：\n1. ……" }
+```
+
+失败（与 §6 统一错误结构一致）：
+
+```json
+{ "error": { "code": 503, "message": "讲解服务暂不可用" } }
+```
+
+---
+
+## 6. 统一错误响应
+
+### 6.1 结构
 
 所有非 2xx 响应统一为：
 
@@ -230,7 +263,7 @@
 
 当前端网络层异常（后端不可达、超时抢先）时，`web/src/api/client.js` 将错误归一化为同一 `{ error: { code, message } }` 结构，保证前端错误态统一。
 
-### 5.2 错误码表
+### 6.2 错误码表
 
 | code（HTTP 同值） | 名称 | 触发场景 | message 示例 | 对应 Wave 4 回归项 |
 |----|------|----------|--------------|--------------------|
@@ -243,7 +276,7 @@
 
 ---
 
-## 6. 变更管理
+## 7. 变更管理
 
 - 本文为 Schema 权威定义；**接口或数据结构一旦变更，必须同步更新 `docs/API.md` 等关联文档，再继续开发**（`AGENTS.md §6`）。
 - 新增题型 / 新字段：优先在现有对象内扩展可选字段；删除或重命名已有字段必须走变更记录并同步后端校验（`validateQuestions.js`）与前端渲染（`QuestionCard.vue`）。
@@ -251,11 +284,11 @@
 
 ---
 
-## 7. Function Calling 工具：search_question_bank（Wave 9）
+## 8. Function Calling 工具：search_question_bank（Wave 9）
 
 模型调用（`callLLM`）携带 OpenAI 兼容 `tools` 声明；模型可先调用本工具检索题库素材，再基于素材命制原创改编题。**对 HTTP 调用方完全透明**：`POST /api/generate` 的请求/响应 Schema（§2/§3）不变。
 
-### 7.1 工具定义（服务端内置）
+### 8.1 工具定义（服务端内置）
 
 | 项 | 值 |
 |----|----|
@@ -263,7 +296,7 @@
 | 必填参数 | `module`（白名单五模块，enum 约束） |
 | 可选参数 | `difficulty`（简单/中等/困难）、`topic`（知识点/主题关键词，题干+知识点+解析模糊匹配）、`limit`（1~10，缺省 5） |
 
-### 7.2 返回结构（role:'tool' 消息内容，JSON）
+### 8.2 返回结构（role:'tool' 消息内容，JSON）
 
 ```json
 {
@@ -291,7 +324,7 @@
 | `source` | `local` / `remote` | 数据来源：`remote`=QUESTION_BANK_API_URL 联网检索；`local`=内置种子题库兜底 |
 | `items[]` | 素材数组 | 与 Question 同构，但含 `module`/`difficulty` 元数据（仅服务端给 LLM 参考，不下发前端） |
 
-### 7.3 数据源与回退
+### 8.3 数据源与回退
 
 - 配置 `QUESTION_BANK_API_URL` 时优先联网检索：`GET {url}?module=&difficulty=&topic=&limit=`，响应 `{ items: [...] }` 或 `[...]`；5s 超时，任何异常/结果为空静默回退本地。
 - 未配置/回退：本地种子（`mockData` 的 `mockBank` 元数据），无网无 Key 可演示。

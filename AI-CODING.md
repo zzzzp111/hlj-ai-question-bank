@@ -24,8 +24,8 @@
 | AgentSwarm（并行集群投递） | Wave 0 文档集群（C0.1~C0.5 并行）、Wave 2/3 模块并行、Wave 5.2a B1 校验强化 | 并行多代理体；Wave 0 首调时因缺 `description` 被拒（见 §4 错误 5） |
 | Bash（curl / node / npm / pkill / lsof） | 原子验证：接口实测、服务启停、端口释放确认、`npm run verify` / `npm run build` | 所有"已完成"结论均以其输出为据 |
 | Read / Edit / Write / Grep / Glob | 代码与文档读写、精准定位 | 优先于 shell 文件操作，保证可审计 |
-| LLM 出题后端（OpenAI 兼容协议，未命名） | 出题 Prompt 的真实模型端（`services/callLLM.js`） | 按协议实现（/chat/completions、30s 超时、四层校验），**本次无 Key，未实测**（C6：未验证不标完成） |
-| Mock 双轨（`services/mockData.js`） | 无 Key / 超时 / 校验失败时的兜底出题源 | 29 题 / 5 模块；响应携带 `mock:true` 供前端标识 |
+| LLM 出题后端（OpenAI 兼容协议，未命名） | 出题 Prompt 的真实模型端（`services/callLLM.js`） | 按协议实现（/chat/completions、超时可配、四层校验）；Wave 14 已实测通过（2026-09-22 DeepSeek `deepseek-flash`，count=3/5/10 均 mock:false；function calling 往返实测） |
+| Mock 双轨（`services/mockData.js`） | 无 Key / 超时 / 校验失败时的兜底出题源 | 150 题 / 五大模块各 30（Wave 13 后）；响应携带 `mock:true` 供前端标识 |
 
 > 全开发过程共投递 10+ 个原子任务集群 / 单代理，所有产出均经主代理复核验证（verify / build / curl）后才放行进入下一波次。
 
@@ -186,6 +186,24 @@
   - **实测**：`count=10` 两次请求各返 10 题且题干串不同（150 题库随机差异）；裸跑命中新增题（数量关系·水管工程）。
 - 与计划偏差：worker 自测命令含 ESM 下 `require` 报错（改等价 import 执行）；服务实测遇 3001 残留进程与启动竞态（探活后重测通过，非代码缺陷）。
 - 验证证据：verify 47/47、e2e 9/9（EXIT=0）、web build 100ms；count=10 双请求实测。
+- 放行结论：PASS。
+
+### 执行记录：Wave 14（Windows 部署适配 + 缺陷修复）
+- 计划内容：按《黑龙江省考AI出题Agent_Windows部署修复清单_交Trae.md》工单执行——唯一部署目标 Windows；修复 P0（部署阻塞）与 P1（功能健壮性）缺陷，并修正 P2 文档一致性，最后跑 §8 验收命令清单并留存输出。
+- 实际完成：
+  - **P0-2 生产同源托管（方案 A）**：`server/src/index.js` 在 `/api` 之后、404 之前挂载 `web/dist`（`express.static` + SPA 回退 regex 仅匹配非 `/api`），`/api/*` 未匹配仍保持 JSON 404 契约；仅当 `dist` 存在时托管，否则打印明确日志。
+  - **P0-3 Node 版本**：`web/package.json` 新增 `engines: {"node":"^20.19.0 || >=22.12.0"}`；仓库根新增 `.nvmrc`（内容 `22`）。
+  - **P0-4 换行符**：新增 `.gitattributes`（`* text=auto eol=lf` + 常见二进制 `binary`）。
+  - **P0-5 中文乱码**：全部 `.bat` 首行 `chcp 65001 >nul`。
+  - **P0-6 一键脚本**：新增 `start-server.bat` / `start-web-dev.bat` / `build-web.bat` / `verify-all.bat`（用 `%~dp0` 推导路径、不硬编码 `D:\demo`、检查 `server\.env` 存在并提示 Mock 模式、日志重定向 `logs\server.log`）。
+  - **P1-1 超时可配置 + 降级可见**：`env.js` 新增 `llmTimeoutMs`（`LLM_TIMEOUT_MS` 默认 30000）；`generate.js` 传 `timeoutMs: env.llmTimeoutMs`；Mock 兜底响应附带可选诊断字段 `mockReason`（`TIMEOUT/NO_KEY/VALIDATION_FAILED/EMPTY_CONTENT/HTTP`），已登记入 `DATA_SCHEMA.md` §3。
+  - **P1-2 推理模型空 content 分类**：`callLLM.js` 新增纯函数 `classifyEmptyContent`（content 空且 finish_reason='length' → `EMPTY_CONTENT` 独立分类，可重试）；`buildChatBody` 支持可选 `max_tokens`（`LLM_MAX_TOKENS`，缺省不写入）；**新增 4 条断言 → verify 基线 47→51**。
+  - **P1-3 explain 前端接入**：`ResultPanel.vue` 解析区新增「追问讲解」按钮，调 `POST /api/explain` 把 `{ explanation }` 就地渲染；`DATA_SCHEMA.md` 新增 §5 ExplainRequest/ExplainResponse；`COMPLIANCE.md` B3 由"未接线"改为"已接线"。
+  - **P1-5 CORS/body 可控**：`CORS_ORIGIN` 白名单（未配置保持宽松）；`express.json({ limit: BODY_LIMIT || '1mb' })`。
+  - **P1-6 日志落盘**：`.bat` 默认 `npm start >> logs\server.log 2>&1`；`.gitignore` 已含 `*.log` 并新增 `logs/`。
+  - **P2 文档一致性**：README（51 项/e2e 9/150 题/模型名/路径/未完成项声明）、COMPLIANCE.md（顶部 Wave 14、51 项、B3 已接线、未实测→已实测）、AI-CODING（工具表 27/28 + 本执行记录）同步修正；历史波次断言数为当期值保留并加顶部说明。
+- 与计划偏差：断言基线实为 **51**（工单记载 47，新增 P1-1/P1-2 断言后合规提升，已在文档明确声明）；`server/.env` 已由人工配置真实 Key，真实链路实测通过（count=3/5/10 均 mock:false）。
+- 验证证据：`npm run verify` 51/51；`node test/e2e.mjs` 9/9 PASS；`web npm run build` 零错误；`verify-all.bat` 三项全过；`curl /api/generate`（无 Key 场景）mock:true + 字段齐全。
 - 放行结论：PASS。
 
 ---

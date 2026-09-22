@@ -12,6 +12,7 @@
 //  - 学习统计小面板：累计作答题数 / 累计正确率（已答口径）/ 薄弱知识点 Top2（样本 <3 标注"样本不足"）
 
 import { reactive, watch } from 'vue'
+import { postJSON } from '../api/client.js'
 
 const props = defineProps({
   /** 判题结果数组 [{ qId, correct, userAnswer, correctAnswer, analysis }]；correct: true / false / null（空答） */
@@ -39,6 +40,37 @@ watch(
 
 function toggleCard(qId) {
   expanded[qId] = !expanded[qId]
+}
+
+/** —— 追问讲解（加分项 B3，接入 /api/explain，见 docs/API.md §5）——
+ *  在解析折叠区提供「追问讲解」按钮：携带该题题干 + 解析（+ 可选疑问）调 explain，
+ *  返回 { explanation } 就地渲染。有 Key 走 LLM 通俗讲解，无 Key 走本地模板重述，均不 Mock。
+ */
+const explaining = reactive({}) // { [qId]: true } 请求中
+const explanationMap = reactive({}) // { [qId]: string } 结果
+const explainError = reactive({}) // { [qId]: true } 失败标记
+
+async function askExplain(qId) {
+  if (explaining[qId]) return
+  const q = questionOf(qId)
+  const r = props.results.find((x) => x.qId === qId)
+  explaining[qId] = true
+  explainError[qId] = false
+  try {
+    const res = await postJSON('/api/explain', {
+      question: (q && q.question) || '',
+      analysis: (r && r.analysis) || '',
+    })
+    if (res && res.explanation) {
+      explanationMap[qId] = res.explanation
+    } else {
+      explainError[qId] = true
+    }
+  } catch {
+    explainError[qId] = true
+  } finally {
+    explaining[qId] = false
+  }
 }
 
 /** 依据 correct 三态给出对错标识（true 绿 / false 红 / null 灰"未作答"） */
@@ -103,6 +135,20 @@ function fmtRate(n) {
             <span class="detail-label">解析</span>
             <span>{{ r.analysis }}</span>
           </p>
+
+          <!-- 追问讲解（/api/explain）：生成通俗讲解并就地展示 -->
+          <div class="explain-zone">
+            <button
+              type="button"
+              class="btn btn-secondary explain-btn"
+              :disabled="explaining[r.qId]"
+              @click="askExplain(r.qId)"
+            >{{ explaining[r.qId] ? '讲解生成中…' : '追问讲解' }}</button>
+            <template v-if="explanationMap[r.qId]">
+              <pre class="explain-output">{{ explanationMap[r.qId] }}</pre>
+            </template>
+            <span v-else-if="explainError[r.qId]" class="explain-error">讲解服务暂不可用，请稍后重试</span>
+          </div>
         </div>
       </li>
     </ul>
@@ -302,6 +348,42 @@ function fmtRate(n) {
   color: var(--color-text-secondary, #6b7280);
   padding-top: var(--spacing-xs, 4px);
   border-top: 1px dashed var(--color-border, #e5e7eb);
+}
+
+/* —— 追问讲解（/api/explain）—— */
+.explain-zone {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm, 8px);
+  margin-top: var(--spacing-sm, 8px);
+  padding-top: var(--spacing-sm, 8px);
+  border-top: 1px solid var(--color-border, #e5e7eb);
+}
+
+.explain-btn {
+  width: fit-content;
+  min-height: 30px;
+  padding: 3px 14px;
+  font-size: 12px;
+}
+
+.explain-output {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--color-text, #1f2937);
+  background: rgba(0, 113, 227, 0.05);
+  border: 1px solid rgba(0, 113, 227, 0.15);
+  border-radius: var(--radius-sm, 6px);
+  padding: var(--spacing-sm, 8px) var(--spacing-md, 12px);
+}
+
+.explain-error {
+  font-size: 12px;
+  color: var(--color-danger, #ff3b30);
 }
 
 /* —— 学习统计 —— */

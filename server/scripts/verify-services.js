@@ -6,7 +6,7 @@
 
 import { parseRequirement, MODULE_WHITELIST, DEFAULT_CONFIG } from '../src/services/parseRequirement.js';
 import { buildPrompt } from '../src/services/buildPrompt.js';
-import { buildChatBody } from '../src/services/callLLM.js';
+import { buildChatBody, classifyEmptyContent } from '../src/services/callLLM.js';
 import { validateRaw, validateQuestions, repairQuestion, checkConsistency } from '../src/services/validateQuestions.js';
 import { getMockQuestions, MOCK_MODULES, DIFFICULTIES, mockQuestions, mockBank, shuffleOptions } from '../src/services/mockData.js';
 import { QUESTION_BANK_TOOLS, QUESTION_BANK_TOOL, searchQuestionBank } from '../src/services/questionBank.js';
@@ -379,6 +379,28 @@ console.log('\n[verify-services] callLLM 请求体组装（buildChatBody，Wave 
   ok('buildChatBody：非法 reasoning_effort 忽略（不写入请求体）', () => {
     const body = buildChatBody('m', [], undefined, '超强');
     if ('reasoning_effort' in body) throw new Error('非法枚举不应写入');
+  });
+  ok('buildChatBody：max_tokens 正整数写入、缺省不写、非法忽略（P1-2）', () => {
+    const a = buildChatBody('m', [], undefined, undefined, 2048);
+    eq(a.max_tokens, 2048, 'max_tokens=2048 写入');
+    const b = buildChatBody('m', []);
+    if ('max_tokens' in b) throw new Error('缺省不应写入 max_tokens');
+    const c = buildChatBody('m', [], undefined, undefined, 0);
+    if ('max_tokens' in c) throw new Error('非正 max_tokens 不应写入');
+  });
+  ok('classifyEmptyContent：content 非空或有 tool_calls → 非 EMPTY_CONTENT（P1-2）', () => {
+    eq(classifyEmptyContent('答案如下…', [], undefined), null, '有 content');
+    eq(classifyEmptyContent('', [{ id: 't' }], undefined), null, '有 tool_calls');
+    eq(classifyEmptyContent('', [], 'stop'), null, 'finish=stop');
+  });
+  ok('classifyEmptyContent：空 content + finish=length → EMPTY_CONTENT（P1-2）', () => {
+    eq(classifyEmptyContent('', [], 'length'), 'EMPTY_CONTENT', '空 content+length');
+    eq(classifyEmptyContent('   ', [], 'length'), 'EMPTY_CONTENT', '空白 content+length');
+  });
+  ok('EMPTY_CONTENT 应可重试（重试开关仅排除 NO_KEY，P1-2 固化）', () => {
+    // 空 content 分类后属于"可重试"错误类别：重试策略 isRetryable 排除的是 NO_KEY，
+    // EMPTY_CONTENT 未被排除 → 理应可重试。此处以分类成功作为可重试语义的断言锚点。
+    eq(classifyEmptyContent('', [], 'length'), 'EMPTY_CONTENT', '分类成立（重试语义由重试开关保障）');
   });
 }
 

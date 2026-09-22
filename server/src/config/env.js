@@ -16,10 +16,21 @@ export const env = {
   llmApiKey: process.env.LLM_API_KEY ?? '',
   llmBaseUrl: process.env.LLM_BASE_URL ?? '',
   llmModel: process.env.LLM_MODEL ?? '',
+  // LLM 调用超时（毫秒，P1-1 可配置）：推理模型题量越大越慢，count=10 实测约 24s，
+  // 如遇偶发超时可将 LLM_TIMEOUT_MS 调大（如 60000）。非法值回落默认 30000。
+  llmTimeoutMs: _toInt(process.env.LLM_TIMEOUT_MS, 30000),
+  // 可选：请求体 max_tokens（P1-2）。缺省不写入请求体，保持既有行为；
+  // 配置正整数后写入，避免推理模型因 reasoning 吃满 token 导致 content 为空。
+  llmMaxTokens: _toInt(process.env.LLM_MAX_TOKENS, 0),
   // 远程题库 API（function calling 数据源，可插拔）：未配置时 searchQuestionBank 回退本地种子题库
   questionBankApiUrl: process.env.QUESTION_BANK_API_URL ?? '',
   // 推理强度（none/low/medium/high，透传为请求体 reasoning_effort；非枚举值由 callLLM 忽略；Wave 11）
   llmReasoningEffort: process.env.LLM_REASONING_EFFORT ?? '',
+  // CORS 白名单（P1-5）：未配置时保持宽松（cors() 全开，保证开发/演示零配置可用）；
+  // 配置后仅接受逗号分隔的白名单来源。生产同源托管（方案 A）无需配置。
+  corsOrigin: process.env.CORS_ORIGIN ?? '',
+  // 请求体大小上限（P1-5）：默认 1mb，非法/为空回落默认
+  bodyLimit: process.env.BODY_LIMIT || '1mb',
 };
 
 export default env;

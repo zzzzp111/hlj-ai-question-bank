@@ -2,7 +2,7 @@
 
 > 对照基线：任务需求文档《全栈开发测试任务_黑龙江省考AI出题Agent_3小.docx》（共 16 节，已全文抽取核对）。
 > 本文件按「需求条目 → 实现位置 → 验证方式 → 结论」四段式逐条映射，是本项目交付符合性的唯一裁决依据。
-> 最后核对：Wave 5.3（定稿）／Wave 5.4（终检）／Wave 6（Apple 风格 UI）／Wave 7（A 级文档族 24 份 01~05 + 全量验证）／Wave 8（最终验证：前后端一致性 + 硬编码审计 + BUG-009 修复，verify 32 / e2e 8 / build 106ms）／Wave 9（function calling 去硬编码：questionBank 动态检索 + 工具往返，verify 40 / e2e 8 / build 100ms）／Wave 10（交付比对：Mock 随机化——随机抽样 + 选项乱序，verify 42 / e2e 8 / build 102ms，docx 190 段逐条核对）／Wave 11（LLM 思考增强：内部推演引导 + reasoning_effort 透传，verify 46 / e2e 8 / build 111ms）／Wave 12（Mock 题库扩容：五模块各 10 题共 50 条 + B1 全量守门，verify 47 / e2e 9 / build 107ms）／Wave 13（团队并行扩容至 150 题：五模块各 30，count=10 双请求实测不同，verify 47 / e2e 9 / build 100ms）。
+> 最后核对：Wave 5.3（定稿）／Wave 5.4（终检）／Wave 6（Apple 风格 UI）／Wave 7（A 级文档族 24 份 01~05 + 全量验证）／Wave 8（最终验证：前后端一致性 + 硬编码审计 + BUG-009 修复，verify 32 / e2e 8 / build 106ms）／Wave 9（function calling 去硬编码：questionBank 动态检索 + 工具往返，verify 40 / e2e 8 / build 100ms）／Wave 10（交付比对：Mock 随机化——随机抽样 + 选项乱序，verify 42 / e2e 8 / build 102ms，docx 190 段逐条核对）／Wave 11（LLM 思考增强：内部推演引导 + reasoning_effort 透传，verify 46 / e2e 8 / build 111ms）／Wave 12（Mock 题库扩容：五模块各 10 题共 50 条 + B1 全量守门，verify 47 / e2e 9 / build 107ms）／Wave 13（团队并行扩容至 150 题：五模块各 30，count=10 双请求实测不同，verify 47 / e2e 9 / build 100ms）／Wave 14（Windows 部署适配 + 缺陷修复：超时可配置与 Mock 降级诊断、推理模型空 content 分类、CORS/body 可控、生产同源托管、一键脚本；真实链路实测通过——verify 51 / e2e 9 / count=3·5·10 均 mock:false / function calling 往返实测）。
 
 ---
 
@@ -52,7 +52,7 @@
 
 | 需求条目 | 实现位置 | 验证 | 结论 |
 |---|---|---|---|
-| 题目质量：四层校验（字段/一致性/选项/答案） | `validateQuestions.js`（`_checkQuestion` / `checkConsistency` / `repairQuestion`） | verify 32 项断言 | ✅ |
+| 题目质量：四层校验（字段/一致性/选项/答案） | `validateQuestions.js`（`_checkQuestion` / `checkConsistency` / `repairQuestion`） | verify 51 项断言 | ✅ |
 | 一致性强化（解析答案 vs answer 冲突判不通过） | `validateQuestions.js`（加分 B1） | verify + e2e 用例 7 | ✅ |
 | 结构化输出契约（单题字段 / 试卷响应 / 错误响应） | `docs/DATA_SCHEMA.md` §3；`routes/generate.js` 统一响应 | e2e 全用例断言字段 | ✅ |
 
@@ -89,7 +89,7 @@
 |---|---|---|---|
 | B1: 题目校验与修正强化 | `validateQuestions.js`（选项完全重复→不通过；解析 vs answer 冲突→不通过；互为超长子串→warning） | e2e 用例 7 | ✅ 已完成 |
 | B2: 再来一道类似（排除集 + 知识点 + 难度续出） | `App.vue:102` + `routes/generate.js`（B2 硬去重） | e2e 用例 8 | ✅ 已完成 |
-| B3: 再简单讲一遍（追问讲解） | 后端 `server/src/routes/explain.js`（有 Key 走 LLM，无 Key 模板兜底）已就绪；**前端无入口按钮，未接线** | 代码审阅 | ⚠️ 后端就绪 / 前端未接线（非最低要求） |
+| B3: 再简单讲一遍（追问讲解） | 后端 `server/src/routes/explain.js`（有 Key 走 LLM，无 Key 模板兜底）**已接入前端**——`web/src/components/ResultPanel.vue` 解析区「追问讲解」按钮调 `POST /api/explain`，返回 `explanation` 就地渲染 | 浏览器实测 + 文档同步（README §8.2 / API §5 / DATA_SCHEMA §5） | ✅ 已接线 |
 | B4: 学习统计（对错/知识点薄弱） | `web/src/components/stats.js` + ResultPanel 统计区 | e2e 用例 6（作答后统计） | ✅ 已前置完成 |
 | 按连对/连错动态调难度 | 未实现（README §9 已如实标注） | — | ❌ 未做（非最低要求） |
 | 流式生成 / 明确的生成过程状态 | `App.vue` 三步骤加载指示（解析需求 → 调用模型 → 校验题目），非流式（Wave 10 复核补记条目） | 前端 UI 审阅 | ✅ 过程状态已实现（流式未做，非最低要求） |
@@ -139,8 +139,8 @@
 
 | 验证项 | 命令 | 结果 |
 |---|---|---|
-| 后端单元 + 服务层断言（32 项） | `cd server && npm run verify` | ✅ 全绿 |
-| 端到端原子测试（8 组用例，退出码 0=通过） | `cd server && node test/e2e.mjs` | ✅ 8/8 PASS，EXIT=0 |
+| 后端单元 + 服务层断言（51 项） | `cd server && npm run verify` | ✅ 全绿 |
+| 端到端原子测试（9 组用例，退出码 0=通过） | `cd server && node test/e2e.mjs` | ✅ 9/9 PASS，EXIT=0 |
 | 前端生产构建 | `cd web && npm run build` | ✅ 基线绿（vite 82ms） |
 | Wave 6 Apple 风格回归：三分支验证 | `server/verify` + `e2e` + `web/build` | ✅ 32/32、8/8、build 绿 |
 | Wave 7 A 级文档族 + 全量验证 | `server/verify` + `e2e` + `web/build` | ✅ 32/32、8/8、101ms；文档族 24 份齐全 |
@@ -156,8 +156,8 @@
 
 ## 3. 未验证项与风险（如实声明）
 
-1. **真实 LLM 链路未实测**：环境无 `LLM_API_KEY`，`mock:false` 分支仅代码路径完整（协议/重试/四层校验均实现），未做端到端实测。配置 Key 后无需改代码即可切换。
-2. **加分项 B3 前端未接线**：`/api/explain` 后端就绪，前端无「再简单讲一遍」按钮（非最低要求，README 已标注）。
+1. ~~**真实 LLM 链路未实测**~~ **→ 已实测通过（2026-09-22）**：使用 DeepSeek `deepseek-flash`，`count=3/5/10` 均返回 `mock:false`；function calling 往返已实测（模型自主调 `search_question_bank`）。配置 Key 后无需改代码即可切换；未配置 Key 仍以 Mock 保闭环。**仍未实测项**：`QUESTION_BANK_API_URL` 配置后的**远程**题库检索（本地种子兜底已由 verify 全自动验证；远程端点无可用服务，未验证）。
+2. **加分项 B3 前端已接线（Wave 14）**：`/api/explain` 调试通，`ResultPanel.vue`「追问讲解」按钮以 Schema 渲染返回内容（非最低要求，README/API/DATA_SCHEMA 已同步）。
 3. **无浏览器级自动化**：防连点（R3）等为代码级守卫，未配 Playwright 驱动测试；Wave 6 计划以本地服务 + fetch 的 e2e 覆盖主链路。
 4. **按连对错调难度未实现**：非最低要求，README §9 已标注。
 
@@ -166,6 +166,7 @@
 ## 4. 结论
 
 - 核心功能 1~4、Agent 七步流程、结构化输出、异常六项、Mock 兜底、最终交付物：**全部 ✅**。
-- 加分项 B1/B2/B4：**已完成**；B3：后端就绪前端未接线；难度动态调整：未做（均已声明）。
+- 加分项 B1/B2/B3/B4：**已完成**（B3 于 Wave 14 前端接线）；难度动态调整：未做（均已声明）。
 - Wave 8 最终验证（2026-09-22）：前后端一致性核对、硬编码审计、文档↔代码一致性复核全部 PASS；期间检出并修复 BUG-009（「再来一道类似」reactive 误用 `.value`），verify 32/32、e2e 8/8、build 106ms 修复后重跑全绿。
+- Wave 14（Windows 部署适配）：verify 51/51、e2e 9/9、build 零错误；真实链路 `mock:false` 实测通过。
 - 最低标准满足：可运行 Demo（Mock 保闭环）+ 核心业务闭环 + 需求符合性本文件可审计。

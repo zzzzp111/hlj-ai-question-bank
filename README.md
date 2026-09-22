@@ -1,8 +1,9 @@
 # 黑龙江省考 AI 出题 Agent — 运行手册（README）
 
-> **当前版本：Wave 13 定稿版**
-> 全部波次（Wave 0 文档 → Wave 1 脚手架 → Wave 2 后端 → Wave 3 前端 → Wave 4 回归 → Wave 5 收尾 + 加分项 B1/B2 → Wave 6 Apple 风格 UI + 原子性审计 → Wave 7 A 级文档族 24 份 + 全量验证 → Wave 8 最终验证 + BUG-009 修复 → Wave 9 function calling 去硬编码 → Wave 10 Mock 随机化 → Wave 11 LLM 思考增强 → Wave 12 Mock 题库扩容 50 题 → Wave 13 团队扩容至 150 题）均已完成并通过原子验证。本文档为运行手册与验收对照：**照本文档即可从零启动双端**。
-> 「已完成」条目均经 `AGENTS.md` §5 原子验证（`npm run verify` / `curl` 实测 / `npm run build` / 回归清单）确认；凡未实测项（真实 LLM 链路）已如实标注，禁止夸大。
+> **当前版本：Wave 13 定稿版 + Windows 部署适配（Wave 14）**
+> 全部波次（Wave 0 文档 → Wave 1 脚手架 → Wave 2 后端 → Wave 3 前端 → Wave 4 回归 → Wave 5 收尾 + 加分项 B1/B2 → Wave 6 Apple 风格 UI + 原子性审计 → Wave 7 A 级文档族 24 份 + 全量验证 → Wave 8 最终验证 + BUG-009 修复 → Wave 9 function calling 去硬编码 → Wave 10 Mock 随机化 → Wave 11 LLM 思考增强 → Wave 12 Mock 题库扩容 50 题 → Wave 13 团队扩容至 150 题 → Wave 14 Windows 部署适配与缺陷修复）均已完成并通过原子验证。本文档为运行手册与验收对照：**照本文档即可从零启动双端**。
+> 「已完成」条目均经 `AGENTS.md` §5 原子验证（`npm run verify` / `curl` 实测 / `npm run build` / 回归清单）确认。真实 LLM 链路已于 2026-09-22 实测通过（`mock:false`）；仍未实测项为远程题库 API（见 §6.2 / §10.1）。
+> **现行断言基线 51 项 / e2e 9 组**（Wave 13 时为 47/9，Wave 14 为强化超时与空输出分类新增 4 条断言升至 51；下表各波次"verify N"为当期值，属历史事实）。
 
 ---
 
@@ -42,7 +43,7 @@ flowchart LR
 | 前端 | Vue 3 + Vite | SPA，开发端口 5173，`/api` 代理到后端 3001 |
 | 后端 | Node.js + Express（ESM） | Node 18+，`server/` 目录，开发端口 3001 |
 | 大模型 | LLM（OpenAI 兼容协议） | 经 `services/callLLM.js` 统一封装调用，超时 / 重试 / 异常回退（C4） |
-| 兜底 | Mock 双轨 | 无 Key / 超时 / 异常时回退内置 Mock 题库（29 题、5 模块），响应携带 `mock: true` |
+| 兜底 | Mock 双轨 | 无 Key / 超时 / 异常时回退内置 Mock 题库（150 题、五大模块各 30），响应携带 `mock: true` |
 
 > 前端零感知后端密钥；真实模型与 Mock 的切换只发生在服务端（见 §6）。
 
@@ -70,7 +71,7 @@ demo_01/
 ├── .agents/skills/hlj-kaoqa-dev/ # 二次开发技能 SKILL.md（复用于后续迭代）
 ├── server/                       # 后端 Node.js + Express（ESM）
 │   ├── .env.example              # 环境变量模板
-│   ├── scripts/verify-services.js# 服务层原子验证（32 项断言）
+│   ├── scripts/verify-services.js# 服务层原子验证（51 项断言）
 │   └── src/
 │       ├── index.js              # 入口：中间件 / 路由装配 / /api/health
 │       ├── config/env.js         # 环境变量读取（仅服务端持有 Key，C1）
@@ -163,9 +164,9 @@ cp .env.example .env     # .env 已被 .gitignore 排除，密钥不会进入仓
 | `PORT` | 否 | `3001` | 后端监听端口 |
 | `LLM_API_KEY` | 配置真实模型时必填 | 空 | 模型服务 API Key。**未配置时系统进入 Mock 模式**（响应 `mock: true`，界面显示 "Mock 模式" 标识，见 §6.3） |
 | `LLM_BASE_URL` | 配置真实模型时必填 | 空 | OpenAI 兼容端点，示例 `https://api.deepseek.com/v1` 或 `https://api.openai.com/v1` |
-| `LLM_MODEL` | 配置真实模型时必填 | 空 | 模型名，示例 `deepseek-chat` / `gpt-4o-mini` |
+| `LLM_MODEL` | 配置真实模型时必填 | 空 | 模型名。**必须先查账号实际可用 ID**：`curl {LLM_BASE_URL}/models -H "Authorization: Bearer $KEY"`。不同账号/套餐返回不同——示例某 DeepSeek 账号仅返回 `deepseek-flash` / `deepseek-v4-pro`，填 `deepseek-chat` 会直接报错 |
 | `QUESTION_BANK_API_URL` | 否 | 空 | 远程题库 API（function calling 数据源，Wave 9）。未配置时 `search_question_bank` 工具回退内置本地种子题库；配置后优先联网检索最新题库素材（见 §6.4） |
-| `LLM_REASONING_EFFORT` | 否 | 空 | 推理强度 `none/low/medium/high`（Wave 11，供 o 系/推理模型如 `deepseek-reasoner`）。透传为请求体 `reasoning_effort`，非枚举值自动忽略 |
+| `LLM_REASONING_EFFORT` | 否 | 空 | 推理强度 `none/low/medium/high`（Wave 11，供 o 系/推理模型如 `deepseek-flash`/`deepseek-v4-pro`）。透传为请求体 `reasoning_effort`，非枚举值自动忽略 |
 
 > 模板来源：`server/.env.example`（含逐项注释）。
 
@@ -249,8 +250,8 @@ server/src/services/callLLM.js
 | 服务层-Prompt 组装 | `server/src/services/buildPrompt.js` | ✅ 已实现（含 context 续出提示） |
 | 服务层-模型调用 | `server/src/services/callLLM.js` | ✅ 已实现且**真实端已实测**（2026-09-22 DeepSeek `deepseek-flash`；超时 / 重试 / 无 Key 判定 / function calling 往返） |
 | 服务层-校验修复 | `server/src/services/validateQuestions.js` | ✅ 已实现（四层校验 + B1 一致性强化） |
-| 服务层-Mock 题库 | `server/src/services/mockData.js` | ✅ 已实现（29 题 / 5 模块 / 难度混合） |
-| 路由-出题 / 健康 | `server/src/routes/generate.js`、`server/src/index.js` | ✅ 已实现（七步流程 + B2 硬去重 + 400 错误归一） |
+| 服务层-Mock 题库 | `server/src/services/mockData.js` | ✅ 已实现（150 题 / 五大模块各 30 / 难度三档混合） |
+| 路由-出题 / 健康 | `server/src/routes/generate.js`、`server/src/index.js` | ✅ 已实现（七步流程 + B2 硬去重 + 400 错误归一 + `mockReason` 降级诊断） |
 | 前端-配置表单 | `web/src/components/ConfigForm.vue` | ✅ 已实现（表单 + 自然语言双入口，显式配置优先） |
 | 前端-题卡渲染 | `web/src/components/QuestionCard.vue` | ✅ 已实现（仅收 id/question/options/knowledgePoint，C2） |
 | 前端-结果面板 | `web/src/components/ResultPanel.vue` | ✅ 已实现（判题 / 解析 / 知识点 / 学习统计） |
@@ -296,11 +297,11 @@ server/src/services/callLLM.js
 | 项 | 内容 |
 |----|------|
 | 项目名 | 黑龙江省考 AI 出题 Agent（全栈 Demo） |
-| 代码地址 | 本地目录 `/Users/zhuyao/Desktop/demo_01` |
+| 代码地址 | 本地目录 `D:\demo`；GitHub `https://github.com/zzzzp111/hlj-ai-question-bank.git`（Windows 部署目标） |
 | 启动方式 | 见 §4 安装与启动（后端 3001 / 前端 5173） |
 | 模型状态 | 真实链路已实测：DeepSeek `deepseek-flash`，`mock:false`（见 §6.2 / §10.1） |
 | 本次已完成 | Wave 0~13 全波次：双端闭环、五模块 Mock（团队扩容至 150 题，各 30 题）、四层校验、判题解析、学习统计、加分项 B1/B2、R1~R4 修复、Apple 风格 UI、A 级文档族 24 份、最终验证 + BUG-009 修复、function calling 去硬编码（questionBank）、Mock 随机化、LLM 思考增强（内部推演引导 + reasoning_effort） |
-| 本次未完成 | 真实 LLM 链路实测（无 Key）；浏览器自动化测试；部署上线（任务书未要求） |
+| 本次未完成 | 远程题库 API（`QUESTION_BANK_API_URL`）联网检索实测；浏览器自动化测试；正式上线（任务书未要求） |
 
 ---
 
@@ -311,9 +312,9 @@ server/src/services/callLLM.js
 cd server && npm install && npm run dev        # 监听 3001
 # 前端
 cd web && npm install && npm run dev           # 监听 5173，/api 代理到 3001
-# 服务层原子验证（32 项断言）
+# 服务层原子验证（51 项断言）
 cd server && npm run verify
-# 端到端原子测试（8 组，自启 3199，退出码 0=通过）
+# 端到端原子测试（9 组，自启 3199，退出码 0=通过）
 cd server && node test/e2e.mjs
 # 构建检查
 cd web && npm run build

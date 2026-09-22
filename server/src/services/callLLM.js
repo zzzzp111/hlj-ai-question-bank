@@ -29,31 +29,49 @@ function _makeError(message, kind) {
 const REASONING_EFFORTS = ['none', 'low', 'medium', 'high'];
 
 /**
+ * 空 content 分类判定（P1-2，纯函数便于原子断言）：
+ * 推理模型的 reasoning_content 会消耗 token，content 为空且 finish_reason='length' 时，
+ * 属"输出被截断/耗尽"，非接口故障 → 独立分类 EMPTY_CONTENT（区别于 HTTP）。
+ * @param {string} content 模型 message.content
+ * @param {object[]} toolCalls message.tool_calls
+ * @param {string|undefined} finishReason choices[0].finish_reason
+ * @returns {string|null} 命中返回分类字符串（'EMPTY_CONTENT'），否则 null（调用方按原 HTTP 处理）
+ */
+export function classifyEmptyContent(content, toolCalls, finishReason) {
+  const hasContent = typeof content === 'string' && content.trim();
+  const hasToolCalls = Array.isArray(toolCalls) && toolCalls.length > 0;
+  if (hasContent || hasToolCalls) return null;
+  return finishReason === 'length' ? 'EMPTY_CONTENT' : null;
+}
+
+/**
  * 组装 /chat/completions 请求体（纯函数，便于原子断言；Wave 11 导出）
  * @param {string} model 模型名
  * @param {object[]} messages OpenAI 消息数组
  * @param {object[]|undefined} tools OpenAI 兼容 tools（缺省/空不写）
  * @param {string|undefined} reasoningEffort none/low/medium/high（非枚举值忽略）
+ * @param {number|undefined} maxTokens 可选 max_tokens（正整数才写入；缺省不写，保持既有行为；P1-2）
  * @returns {object} 请求体
  */
-export function buildChatBody(model, messages, tools, reasoningEffort) {
+export function buildChatBody(model, messages, tools, reasoningEffort, maxTokens) {
   const body = { model, messages, temperature: 0.7 };
   if (Array.isArray(tools) && tools.length > 0) body.tools = tools;
   if (typeof reasoningEffort === 'string' && REASONING_EFFORTS.includes(reasoningEffort)) {
     body.reasoning_effort = reasoningEffort;
   }
+  if (Number.isInteger(maxTokens) && maxTokens > 0) body.max_tokens = maxTokens;
   return body;
 }
 
 /**
  * 单次请求（不含重试）
  * @param {{baseUrl:string, apiKey:string, model:string, messages:object[],
- *          tools?:object[], signal:AbortSignal}} opts
+ *          tools?:object[], maxTokens?:number, signal:AbortSignal}} opts
  * @returns {Promise<{content:string, toolCalls:object[]}>} 模型 message 的 content 与 tool_calls（可为空）
  */
-async function _fetchOnce({ baseUrl, apiKey, model, messages, tools, reasoningEffort, signal }) {
+async function _fetchOnce({ baseUrl, apiKey, model, messages, tools, reasoningEffort, maxTokens, signal }) {
   const url = `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
-  const body = buildChatBody(model, messages, tools, reasoningEffort);
+  const body = buildChatBody(model, messages, tools, reasoningEffort, maxTokens);
 
   const resp = await fetch(url, {
     method: 'POST',
@@ -75,6 +93,12 @@ async function _fetchOnce({ baseUrl, apiKey, model, messages, tools, reasoningEf
   const message = data?.choices?.[0]?.message;
   const content = typeof message?.content === 'string' ? message.content : '';
   const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+  // P1-2：推理模型的 reasoning_content 会"吃掉"token，content 可能为空（finish_reason='length'）。
+  // classifyEmptyContent 判定为 EMPTY_CONTENT（非接口故障），避免日志把人引向 HTTP/网络排查。
+  const emptyKind = classifyEmptyContent(content, toolCalls, data?.choices?.[0]?.finish_reason);
+  if (emptyKind === 'EMPTY_CONTENT') {
+    throw _makeError('模型输出被截断或全部消耗于推理过程（content 为空，finish_reason=length）', 'EMPTY_CONTENT');
+  }
   if (!content.trim() && toolCalls.length === 0) {
     throw _makeError('模型响应缺少 message.content 且无 tool_calls', 'HTTP');
   }
@@ -85,7 +109,7 @@ async function _fetchOnce({ baseUrl, apiKey, model, messages, tools, reasoningEf
  * 一轮完整会话（初始请求 + tool_calls 往返循环）；不做重试（重试由 callLLM 外层负责）
  * @returns {Promise<{content:string}>} 最终 message.content（此时不再有未处理的 tool_calls）
  */
-async function _runSession({ baseUrl, apiKey, model, messages, tools, toolExecutor, reasoningEffort, timeoutMs }) {
+async function _runSession({ baseUrl, apiKey, model, messages, tools, toolExecutor, reasoningEffort, maxTokens, timeoutMs }) {
   let roundMessages = Array.isArray(messages) ? messages.slice() : [];
   const hasTools = Array.isArray(tools) && tools.length > 0;
 
@@ -101,6 +125,7 @@ async function _runSession({ baseUrl, apiKey, model, messages, tools, toolExecut
         messages: roundMessages,
         tools: hasTools ? tools : undefined,
         reasoningEffort,
+        maxTokens,
         signal: controller.signal,
       });
     } finally {
@@ -171,7 +196,12 @@ export async function callLLM(messages, opts = {}) {
 
   const baseUrl = (opts.baseUrl ?? env.llmBaseUrl ?? '').trim() || DEFAULT_BASE_URL;
   const model = (opts.model ?? env.llmModel ?? '').trim() || DEFAULT_MODEL;
-  const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : DEFAULT_TIMEOUT_MS;
+  const timeoutMs = Number.isInteger(opts.timeoutMs) && opts.timeoutMs > 0
+    ? opts.timeoutMs
+    : (Number.isInteger(env.llmTimeoutMs) && env.llmTimeoutMs > 0 ? env.llmTimeoutMs : DEFAULT_TIMEOUT_MS);
+  const maxTokens = (Number.isInteger(opts.maxTokens) && opts.maxTokens > 0)
+    ? opts.maxTokens
+    : (Number.isInteger(env.llmMaxTokens) && env.llmMaxTokens > 0 ? env.llmMaxTokens : undefined);
   const maxRetries = Number.isInteger(opts.maxRetries) ? opts.maxRetries : MAX_RETRIES;
 
   const normalizedMessages = Array.isArray(messages) ? messages : [];
@@ -187,6 +217,7 @@ export async function callLLM(messages, opts = {}) {
         tools: opts.tools,
         toolExecutor: opts.toolExecutor,
         reasoningEffort: opts.reasoningEffort,
+        maxTokens,
         timeoutMs,
       });
       return content;
