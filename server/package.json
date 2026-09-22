@@ -1,0 +1,21 @@
+{
+  "name": "hlj-kaoqa-server",
+  "version": "0.1.0",
+  "description": "黑龙江省考 AI 出题 Agent 后端（Express + ESM）",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "verify": "node scripts/verify-services.js",
+    "test:e2e": "node test/e2e.mjs"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
